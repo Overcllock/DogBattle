@@ -7,6 +7,8 @@ namespace game
   {
     public static Game self;
 
+    GameLoop game_loop;
+
     void Awake()
     {
       Init();
