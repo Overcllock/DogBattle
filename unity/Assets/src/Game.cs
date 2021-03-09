@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using Cysharp.Threading.Tasks;
+using DG.Tweening;
 
 namespace game 
 {
@@ -7,7 +8,7 @@ namespace game
   {
     public static Game self;
 
-    GameLoop game_loop;
+    static GameLoop game_loop = new GameLoop();
 
     void Awake()
     {
@@ -22,7 +23,9 @@ namespace game
       Assets.InitForEditor();
 #endif
 
+      DOTween.Init();
       UI.Init();
+      game_loop.Init();
     }
 
     void Update()
@@ -32,12 +35,17 @@ namespace game
 
     void FixedUpdate()
     {
-
+      game_loop.Tick();
     }
 
     public static void Quit()
     {
       Application.Quit();
+    }
+
+    public static void TrySwitchState(GameMode new_state)
+    {
+      game_loop?.TrySwitchTo(new_state);
     }
 
     void OnApplicationPause(bool paused)

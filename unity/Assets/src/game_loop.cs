@@ -1,4 +1,5 @@
 using UnityEngine;
+using Cysharp.Threading.Tasks;
 
 namespace game 
 {
@@ -6,7 +7,9 @@ namespace game
 public enum GameMode
 {
   None,
-  Loading
+  Loading,
+  IdleScreen,
+  Battle
 }
 
 public class GameLoop
@@ -36,13 +39,15 @@ public class GameLoop
     fsm = new StateMachine<GameMode>();
     
     AddState(new StateLoading());
+    AddState(new StateIdleScreen());
+    AddState(new StateBattle());
     
     fsm.SwitchTo(GameMode.Loading);
   }
 
   public void Tick()
   {
-    fsm.Update();
+    fsm?.Update();
   }
 
   public bool TrySwitchTo(GameMode state)
@@ -62,14 +67,67 @@ public class GameLoop
   {
     public override GameMode GetMode() { return GameMode.Loading; }
 
-    public override void OnEnter()
+    bool loading_completed = false;
+    UIWindow ui;
+
+    public override async void OnEnter()
     {
-      
+      ui = await UI.OpenAsync("loading");
+      await Loading();
     }
 
-    public override void OnExit()
+    public override void OnUpdate()
     {
-      
+      if(!loading_completed)
+        return;
+
+      fsm.TrySwitchTo(GameMode.IdleScreen);
+    }
+
+    public override async void OnExit()
+    {
+      await ui.CloseAsync();
+    }
+
+    async UniTask Loading()
+    {
+      await Assets.PreloadAsync("Prefabs/location");
+      await UI.Preload("start");
+      await UI.Preload("hud");
+
+      loading_completed = true;
+    }
+  }
+
+  class StateIdleScreen : State
+  {
+    public override GameMode GetMode() { return GameMode.IdleScreen; }
+
+    UIWindow ui;
+
+    public override async void OnEnter()
+    {
+      Assets.TryReuse("Prefabs/location");
+      await UniTask.WaitWhile(() => UI.Exists("loading"));
+      ui = await UI.OpenAsync("start");
+    }
+
+    public override async void OnExit()
+    {
+      await ui.CloseAsync();
+    }
+  }
+
+  class StateBattle : State
+  {
+    public override GameMode GetMode() { return GameMode.Battle; }
+
+    UIWindow ui;
+
+    public override async void OnEnter()
+    {
+      await UniTask.WaitWhile(() => UI.Exists("start"));
+      ui = UI.OpenSync("hud");
     }
   }
 }

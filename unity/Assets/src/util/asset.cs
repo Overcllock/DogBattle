@@ -41,7 +41,6 @@ public static class Assets
     {
       this.prefab = prefab;
       this.go = go;
-      Acquire(used);
       this.release_frame = 0;
     }
 
@@ -64,17 +63,13 @@ public static class Assets
       return new GameObject();
       
     var tpl = ResourceLoad(prefab);
-    var go = parent == null
-      ? Object.Instantiate(tpl)
-      : Object.Instantiate(tpl, parent);
+    var asset = parent == null ? Object.Instantiate(tpl) : Object.Instantiate(tpl, parent);
+    Error.Assert(asset != null, prefab);
 
-    if(go != null)
-      return go;
+    var item = AddToPool(prefab, asset, true);
+    Activate(asset, true, parent);
 
-    var error_message = prefab != string.Empty
-      ? "Can't load prefab, path: " + prefab
-      : "Can't load prefab, path string is empty.";
-    throw new Exception(error_message);
+    return asset;
   }
   
   public static async UniTask<GameObject> LoadAsync(string prefab, Transform parent = null)
@@ -83,17 +78,51 @@ public static class Assets
       return new GameObject();
       
     var tpl = await ResourceLoadAsync(prefab);
-    var go = parent == null
-      ? Object.Instantiate(tpl)
-      : Object.Instantiate(tpl, parent);
+    var asset = parent == null ? Object.Instantiate(tpl) : Object.Instantiate(tpl, parent);
+    Error.Assert(asset != null, prefab);
 
-    if(go != null)
-      return go;
+    var item = AddToPool(prefab, asset, true);
+    Activate(asset, true, parent);
 
-    var error_message = prefab != string.Empty
-      ? "Can't load prefab, path: " + prefab
-      : "Can't load prefab, path string is empty.";
-    throw new Exception(error_message);
+    return asset;
+  }
+
+  public static async UniTask<GameObject> PreloadAsync(string prefab, Transform parent = null)
+  {
+    if(prefab == NO_PREFAB)
+      return null;
+
+    var tpl = await ResourceLoadAsync(prefab);
+    if(tpl == null)
+    {
+      Error.Assert(false, prefab);
+      return null;
+    }
+
+    var asset = Object.Instantiate(tpl);
+    Error.Assert(asset != null, prefab);
+
+    var item = AddToPool(prefab, asset, false);
+    item.Acquire(false);
+    Activate(asset, false, parent);
+
+    PreloadTextures(asset);
+
+    return asset;
+  }
+
+  static void PreloadTextures(GameObject go)
+  {
+    int dummy_width;
+    var renderers = new List<Renderer>();
+    go.GetComponentsInChildren<Renderer>(includeInactive: true, renderers);
+
+    foreach(var renderer in renderers)
+    {
+      //NOTE: accessing material texture property to load it into VRAM
+      if(renderer.sharedMaterial != null && renderer.sharedMaterial.mainTexture != null)
+        dummy_width = renderer.sharedMaterial.mainTexture.width;
+    }
   }
 
   public static GameObject TryReuse(string prefab, bool activate = true, Transform parent = null, bool world_position_stays = true)
@@ -103,7 +132,8 @@ public static class Assets
     {
       ++pool_miss;
       game_object = Load(prefab);
-      AddToPool(prefab, game_object, true);
+      var item = AddToPool(prefab, game_object, true);
+      item.Acquire(true);
     }
     else
       ++pool_hit;
@@ -112,10 +142,28 @@ public static class Assets
     return game_object;
   }
 
-  static void AddToPool(string prefab, GameObject go, bool used)
+  public static async UniTask<GameObject> TryReuseAsync(string prefab, bool activate = true, Transform parent = null, bool world_position_stays = true)
+  {
+    var game_object = TryToGetFromPool(prefab);
+    if(game_object == null)
+    {
+      ++pool_miss;
+      game_object = await LoadAsync(prefab);
+      var item = AddToPool(prefab, game_object, true);
+      item.Acquire(true);
+    }
+    else
+      ++pool_hit;
+
+    Activate(game_object, activate, parent, world_position_stays);
+    return game_object;
+  }
+
+  static AssetsPoolItem AddToPool(string prefab, GameObject go, bool used)
   {
     var pool_item = new AssetsPoolItem(prefab, go, used);
     pool.Add(pool_item);
+    return pool_item;
   }
 
   static GameObject TryToGetFromPool(string prefab)

@@ -43,8 +43,7 @@ public class CommandProcessor
     CommandStatus status;
     public CommandStatus GetStatus() => status;
 
-    CancellationTokenSource cts = new CancellationTokenSource();
-    public CancellationTokenSource GetCancellationTokenSource() => cts;
+    public CancellationTokenSource GetCancellationTokenSource() => default(CancellationTokenSource);
 
     public bool IsCancelable() => OnCancel != null;
 
@@ -60,7 +59,7 @@ public class CommandProcessor
     public void ScheduleExecute()
     {
       status = CommandStatus.Queued;
-      task_manager.ScheduleSyncTask(Execute, OnExecuteCompleted, cts: this.cts);
+      task_manager.ScheduleSyncTask(Execute, OnExecuteCompleted);
     }
 
     void Execute()

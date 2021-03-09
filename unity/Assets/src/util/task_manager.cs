@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using System;
+using UnityEngine;
 using UniRx;
 
 namespace game.tasks {
@@ -15,7 +16,9 @@ public enum EnumGameTaskPriority
 
 public interface ITask
 {
-  UniTask ProcessTask();
+  bool IsAsync();
+  UniTask ProcessAsyncTask();
+  void ProcessSyncTask();
   void Subscribe(Action<bool> on_finished);
   void Unsubscribe(Action<bool> on_finished);
   void Stop();
@@ -40,13 +43,23 @@ public abstract class GameTaskBase : ITask
   protected bool is_completed = false;
   public bool IsCompleted() => is_completed;
 
+  public abstract bool IsAsync();
+
   public void Stop()
   {
     cts?.Cancel();
     on_finished?.Invoke(true);
   }
 
-  public abstract UniTask ProcessTask();
+  public virtual async UniTask ProcessAsyncTask()
+  {
+    await UniTask.WaitForFixedUpdate();
+  }
+
+  public virtual void ProcessSyncTask()
+  {
+    //NOTE: do nothing by default
+  }
 
   public void Subscribe(Action<bool> on_finished)
   {
@@ -71,21 +84,22 @@ public abstract class GameTaskBase : ITask
 
 public class GameTaskSync : GameTaskBase
 {
+  public override bool IsAsync() => false;
+
   Action task_action;
 
-  public static GameTaskSync Create(Action task_action, EnumGameTaskPriority priority = EnumGameTaskPriority.Default, CancellationTokenSource cts = default(CancellationTokenSource))
+  public static GameTaskSync Create(Action task_action, EnumGameTaskPriority priority = EnumGameTaskPriority.Default)
   {
-    return new GameTaskSync(task_action, priority, cts);
+    return new GameTaskSync(task_action, priority);
   }
 
-  public GameTaskSync(Action task_action, EnumGameTaskPriority priority, CancellationTokenSource cts)
+  public GameTaskSync(Action task_action, EnumGameTaskPriority priority)
   {
     this.task_action = task_action;
     this.task_priority = priority;
-    this.cts = cts;
   }
 
-  public override async UniTask ProcessTask()
+  public override void ProcessSyncTask()
   {
     if(task_action == null)
       return;
@@ -99,6 +113,8 @@ public class GameTaskSync : GameTaskBase
 
 public class GameTaskAsync : GameTaskBase
 {
+  public override bool IsAsync() => true;
+
   Func<UniTask> task_action;
 
   public static GameTaskAsync Create(
@@ -118,7 +134,7 @@ public class GameTaskAsync : GameTaskBase
     this.is_parallel = is_parallel;
   }
 
-  public override async UniTask ProcessTask()
+  public override async UniTask ProcessAsyncTask()
   {
     if(task_action == null)
       return;
@@ -142,13 +158,12 @@ public class GameTaskManager
   public void ScheduleSyncTask(
     Action task_action, 
     Action<bool> on_finished, 
-    EnumGameTaskPriority task_priority = EnumGameTaskPriority.Default, 
-    CancellationTokenSource cts = default(CancellationTokenSource))
+    EnumGameTaskPriority task_priority = EnumGameTaskPriority.Default)
   {
     if(task_action == null)
       return;
 
-    var task = GameTaskSync.Create(task_action, task_priority, cts);
+    var task = GameTaskSync.Create(task_action, task_priority);
     task.Subscribe(on_finished);
     AddTask(task, task_priority);
   }
@@ -170,7 +185,10 @@ public class GameTaskManager
 
   public bool IsBusy()
   {
-    return !current_task_value.Status.IsCompleted();
+    if(current_task == null)
+      return false;
+    
+    return !current_task.IsCompleted();
   }
 
   public void Tick()
@@ -249,7 +267,16 @@ public class GameTaskManager
   void RunNext()
   {
     current_task = GetNextTask();
-    current_task_value = current_task != null ? current_task.ProcessTask().AttachExternalCancellation(current_task.GetCancellationToken()) : UniTask.CompletedTask;
+    if(current_task == null)
+    {
+      current_task_value = UniTask.CompletedTask;
+      return;
+    }
+
+    if(current_task.IsAsync())
+      current_task_value = current_task.ProcessAsyncTask().AttachExternalCancellation(current_task.GetCancellationToken());
+    else
+      current_task.ProcessSyncTask();
   }
 
   void RunParallel()
@@ -258,7 +285,7 @@ public class GameTaskManager
       return;
 
     var task = queued_parallel_tasks.Dequeue();
-    task.ProcessTask().AttachExternalCancellation(task.GetCancellationToken());
+    task.ProcessAsyncTask().AttachExternalCancellation(task.GetCancellationToken());
 
     running_parallel_tasks.Add(task);
   }

@@ -1,7 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
-using UniRx;
+using UnityEngine.UI;
 
 namespace game 
 {
@@ -9,60 +9,87 @@ namespace game
 public class UI 
 {
   static GameObject root;
+  static Transform windows_container;
+
+  public static Image blackout;
 
   public static Dictionary<uint, UIWindow> idle_windows = new Dictionary<uint, UIWindow>();
   public static Dictionary<uint, UIWindow> opened_windows = new Dictionary<uint, UIWindow>();
 
   public static void Init()
   {
-    root = Assets.Load("UI/ui_root");
+    root = Assets.Load("Prefabs/ui/ui_root");
     Error.Verify(root != null);
+
+    windows_container = root.GetChild("windows")?.transform;
+    Error.Verify(windows_container != null);
+
+    blackout = root.GetChild("blackout")?.GetComponent<Image>();
+    Error.Verify(blackout != null);
+
+    //EnableBlackout(true);
+  }
+
+  public static void EnableBlackout(bool enable)
+  {
+    blackout?.gameObject.SetActive(enable);
   }
 
   static UIWindow LoadWindowSync(string name)
   {
-    var prefab = Assets.Load($"UI/windows/{name}", root.transform);
+    var prefab = Assets.TryReuse($"Prefabs/ui/windows/{name}", parent: windows_container.transform);
     var window = prefab.GetComponent<UIWindow>();
 
     Error.Assert(window != null, $"Failed to load UI window ({name}). UIWindow component not found.");
+
+    window.SetNameHash(Hash.CRC32(name));
 
     return window;
   }
 
   static async UniTask<UIWindow> LoadWindowAsync(string name)
   {
-    var prefab = await Assets.LoadAsync($"UI/windows/{name}", root.transform);
+    var prefab = await Assets.TryReuseAsync($"Prefabs/ui/windows/{name}", parent: windows_container.transform);
     var window = prefab.GetComponent<UIWindow>();
 
     Error.Assert(window != null, $"Failed to load UI window ({name}). UIWindow component not found.");
+
+    window.SetNameHash(Hash.CRC32(name));
 
     return window;
   }
 
   public static async UniTask<UIWindow> Preload(string name)
   {
-    var window = await LoadWindowAsync(name);
+    var prefab = await Assets.PreloadAsync($"Prefabs/ui/windows/{name}", windows_container.transform);
+    Error.Assert(prefab != null, $"Failed to preload UI window ({name}). Prefab not found.");
+
+    var window = prefab.GetComponent<UIWindow>();
+    Error.Assert(window != null, $"Failed to preload UI window ({name}). UIWindow component not found.");
+
+    window.SetNameHash(Hash.CRC32(name));
+
     return window;
   }
 
   public static UIWindow OpenSync(string name)
   {
     var window = LoadWindowSync(name);
-    window.TryExecuteCommand("open");
+    window.Open();
     return window;
   }
 
   public static async UniTask<UIWindow> OpenAsync(string name)
   {
     var window = await LoadWindowAsync(name);
-    window.TryExecuteCommand("open");
+    await window.OpenAsync();
     return window;
   }
 
   public static void CloseAll(bool force = false)
   {
     foreach(var window in opened_windows.Values)
-      window.TryExecuteCommand("close");
+      window.Close();
   }
 
   public static void Close(string name, bool force = false)
@@ -75,7 +102,13 @@ public class UI
     }
 
     var window = opened_windows[hash];
-    window.TryExecuteCommand("close");
+    window.Close();
+  }
+
+  public static bool Exists(string name, bool is_opened = true)
+  {
+    var hash = Hash.CRC32(name);
+    return is_opened && opened_windows.ContainsKey(hash) || idle_windows.ContainsKey(hash);
   }
 }
 
@@ -94,9 +127,8 @@ public enum UIWindowState
 public abstract class UIWindow : MonoBehaviour
 {
   protected StateMachine<UIWindowState> fsm = new StateMachine<UIWindowState>();
-  protected CommandProcessor cmd_proc = new CommandProcessor();
 
-  abstract class State
+  protected abstract class State
   {
     public abstract UIWindowState GetMode();
     public virtual void OnEnter() { }
@@ -124,7 +156,10 @@ public abstract class UIWindow : MonoBehaviour
 
   protected virtual void PreInit()
   {
-    DefineCommands();
+    var cg = GetComponent<CanvasGroup>();
+    if(cg != null)
+      cg.alpha = 0;
+      
     pre_init_completed = true;
   }
 
@@ -135,6 +170,8 @@ public abstract class UIWindow : MonoBehaviour
 
   void InitFSM()
   {
+    fsm.LogSetEnabled(false);
+
     AddState(new StatePreInit());
     AddState(new StateInit());
     AddState(new StateIdle());
@@ -151,16 +188,41 @@ public abstract class UIWindow : MonoBehaviour
     fsm.Add(state.GetMode(), state.OnEnter, state.OnUpdate, state.OnExit);
   }
 
+  public void TrySwitchTo(UIWindowState new_state)
+  {
+    fsm.TrySwitchTo(new_state);
+  }
+
+  public virtual void Open()
+  { 
+    TrySwitchTo(UIWindowState.Opened);
+  }
+
+  public virtual void Close()
+  { 
+    TrySwitchTo(UIWindowState.Closed);
+  }
+
+  public virtual async UniTask OpenAsync()
+  { 
+    await UniTask.WaitWhile(() => GetCurrentState() != UIWindowState.Idle);
+    TrySwitchTo(UIWindowState.Opened);
+  }
+
+  public virtual async UniTask CloseAsync()
+  { 
+    await UniTask.WaitWhile(() => GetCurrentState() != UIWindowState.Opened);
+    TrySwitchTo(UIWindowState.Closed);
+  }
+
   void FixedUpdate()
   {
     fsm.Update();
-    cmd_proc?.Tick();
   }
 
   void OnDestroy()
   {
     fsm.Shutdown();
-    cmd_proc.Destroy();
   }
 
 #region UIWindow states
@@ -225,21 +287,13 @@ public abstract class UIWindow : MonoBehaviour
 
     public override void OnEnter()
     {
-      //TODO: block user input
-
-      window.TryExecuteCommand("do_open_anim");
-    }
-
-    public override void OnUpdate()
-    {
-      //TODO: waiting for open anim
-
-      fsm.TrySwitchTo(UIWindowState.Opened);
+      UI.opened_windows.AddUnique(window.GetNameHash(), window);
+      window.EnableUIInput(false);
     }
 
     public override void OnExit()
     {
-      //TODO: unblock user input
+      window.EnableUIInput(true);
     }
   }
 
@@ -247,41 +301,20 @@ public abstract class UIWindow : MonoBehaviour
   {
     public override UIWindowState GetMode() { return UIWindowState.Opened; }
 
-    uint hash;
-
     public override void OnEnter()
     {
-      hash = window.GetNameHash();
-      UI.opened_windows.Add(hash, window);
+      UI.opened_windows.AddUnique(window.GetNameHash(), window);
     }
 
     public override void OnExit()
     {
-      //TODO: block user input
-
-      UI.opened_windows.Remove(hash);
+      window.EnableUIInput(false);
     }
   }
 
   class StateClosing : State
   {
     public override UIWindowState GetMode() { return UIWindowState.Closing; }
-
-    public override void OnEnter()
-    {
-      //TODO: playing anims and etc
-    }
-
-    public override void OnUpdate()
-    {
-      //TODO: waiting for anims and etc
-      fsm.TrySwitchTo(UIWindowState.Closed);
-    }
-
-    public override void OnExit()
-    {
-      
-    }
   }
 
   class StateClosed : State
@@ -290,36 +323,9 @@ public abstract class UIWindow : MonoBehaviour
 
     public override void OnEnter()
     {
+      UI.opened_windows.Remove(window.GetNameHash());
       Assets.Release(window.gameObject);
     }
-  }
-
-#endregion
-
-#region UIWindow commands
-  public bool TryExecuteCommand(string command)
-  {
-    if(!cmd_proc.CommandExists(command))
-      return false;
-
-    cmd_proc.ExecuteCommand(command);
-    return true;
-  }
-
-  protected virtual void DefineCommands()
-  {
-    cmd_proc.DefineSyncCommand("open", Open);
-    cmd_proc.DefineSyncCommand("close", Close);
-  }
-
-  protected virtual void Open()
-  {
-    fsm.TrySwitchTo(UIWindowState.Opening);
-  }
-
-  protected virtual void Close()
-  {
-    fsm.TrySwitchTo(UIWindowState.Closing);
   }
 
 #endregion
