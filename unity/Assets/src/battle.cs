@@ -5,6 +5,7 @@ using Cysharp.Threading.Tasks;
 using UnityEngine.UI;
 using DG.Tweening;
 using UnityEngine.Tilemaps;
+using System.Linq;
 
 namespace game
 {
@@ -25,8 +26,13 @@ public class BattleUnit : MonoBehaviour
   const float DAMAGE_MIN = 5f;
   const float DAMAGE_MAX = 15f;
 
+  uint id;
+  public uint GetID() => id;
+  public void SetID(uint value) => id = value;
+
   float hp;
   public float GetHP() => hp;
+  public float GetHPPercent() => Mathf.Clamp01(hp / MAX_HP);
 
   uint team_index;
   public uint GetTeamIndex() => team_index;
@@ -57,7 +63,18 @@ public class BattleUnit : MonoBehaviour
   {
     fsm = new StateMachine<BattleUnitState>();
 
+    AddState(new StateSpawning());
+    AddState(new StateIdle());
+    AddState(new StateMoving());
+    AddState(new StateAttacking());
+    AddState(new StateDying());
+
     fsm.SwitchTo(BattleUnitState.Spawning);
+  }
+
+  void FixedUpdate()
+  {
+    fsm.Update();
   }
 
   public void Init(uint team_index)
@@ -96,19 +113,14 @@ public class BattleUnit : MonoBehaviour
   {
     public override BattleUnitState GetMode() { return BattleUnitState.Spawning; }
 
-    public override void OnEnter()
-    {
-
-    }
-
     public override void OnUpdate()
     {
-      
-    }
+      var hud = UI.Find<UIHud>("hud");
+      if(hud == null || hud.GetCurrentState() != UIWindowState.Opened)
+        return;
 
-    public override void OnExit()
-    {
-      
+      hud.DefineHPBar(unit.GetID());
+      fsm.TrySwitchTo(BattleUnitState.Idle);
     }
   }
 
@@ -216,7 +228,7 @@ public class Battleground
   bool is_loaded = false;
   public bool IsLoaded() => is_loaded;
 
-  List<BattleUnit> units = new List<BattleUnit>();
+  Dictionary<uint, BattleUnit> units = new Dictionary<uint, BattleUnit>();
 
   public async UniTask Load()
   {
@@ -238,7 +250,17 @@ public class Battleground
 
   public void AddUnit(BattleUnit unit)
   {
-    units.Add(unit);
+    var id = units.Keys.Count > 0 ? units.Keys.Max() + 1 : 0;
+    unit.SetID(id);
+    units.Add(id, unit);
+  }
+
+  public BattleUnit GetUnit(uint id)
+  {
+    if(!units.ContainsKey(id))
+      return null;
+    
+    return units[id];
   }
 
   public BattleUnit FindNearestEnemyUnit(Vector2 point, uint team_index)
@@ -246,7 +268,7 @@ public class Battleground
     int min_dist = bounds.GetWidth() * bounds.GetHeight();
     BattleUnit nearest_unit = null;
 
-    foreach(var unit in units)
+    foreach(var unit in units.Values)
     {
       var unit_tilepos = unit.GetTilePosition();
       var dist = Pathfinder.GetHeuristicPathLength(point, unit_tilepos);
@@ -313,6 +335,8 @@ public class BattleManager
       var world_pos = tilemap.CellToWorld(point);
       
       unit.transform.position = world_pos;
+
+      battleground.AddUnit(unit);
     }
   }
 

@@ -110,6 +110,20 @@ public class UI
     var hash = Hash.CRC32(name);
     return is_opened && opened_windows.ContainsKey(hash) || idle_windows.ContainsKey(hash);
   }
+
+  public static T Find<T>(string name, bool is_opened = true) where T : UIWindow
+  {
+    var hash = Hash.CRC32(name);
+    var targed_pool = is_opened ? opened_windows : idle_windows;
+
+    if(!targed_pool.ContainsKey(hash))
+      return null;
+
+    if(targed_pool[hash] is T result)
+      return result;
+
+    return null;
+  }
 }
 
 public enum UIWindowState

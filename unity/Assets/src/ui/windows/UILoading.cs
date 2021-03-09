@@ -5,11 +5,6 @@ namespace game
 
 public class UILoading : UIWindow
 {
-  protected override void Init()
-  {
-    base.Init();
-  }
-
   public override async UniTask OpenAsync()
   {
     await UniTask.WaitWhile(() => GetCurrentState() != UIWindowState.Idle);
