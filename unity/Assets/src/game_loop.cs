@@ -122,12 +122,12 @@ public class GameLoop
   {
     public override GameMode GetMode() { return GameMode.Battle; }
 
-    UIWindow ui;
+    UIWindow hud;
 
     public override async void OnEnter()
     {
       await UniTask.WaitWhile(() => UI.Exists("start"));
-      ui = UI.OpenSync("hud");
+      hud = UI.OpenSync("hud");
     }
   }
 }
