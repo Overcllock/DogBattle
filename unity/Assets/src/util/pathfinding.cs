@@ -6,6 +6,57 @@ using UnityEngine.Tilemaps;
 namespace game
 {
 
+public struct FieldBounds
+{
+  public int min_x;
+  public int min_y;
+  public int max_x;
+  public int max_y;
+
+  public FieldBounds(int min_x, int max_x, int min_y, int max_y)
+  {
+    this.min_x = min_x;
+    this.max_x = max_x;
+    this.min_y = min_y;
+    this.max_y = max_y;
+  }
+
+  public int GetWidth()
+  {
+    return Mathf.Abs(max_x - min_x) + 1;
+  }
+
+  public int GetHeight()
+  {
+    return Mathf.Abs(max_y - min_y) + 1;
+  }
+
+  public bool PointExists(Vector2 point)
+  {
+    if(point.x < min_x || point.x > max_x)
+      return false;
+    if(point.y < min_y || point.y > max_y)
+      return false;
+    
+    return true;
+  }
+
+  public List<Vector2> GetAllPoints()
+  {
+    var points = new List<Vector2>();
+    for(int x = min_x; x <= max_x; x++)
+    {
+      for(int y = min_y; y <= max_y; y++)
+      {
+        var point = new Vector2(x, y);
+        points.Add(point);
+      }
+    }
+
+    return points;
+  }
+}
+
 public class PathNode
 {
   public Vector2 Position { get; set; }
@@ -22,24 +73,17 @@ public class PathNode
 public class Pathfinder
 {
   int[,] field;
-
-  int min_x;
-  int min_y;
-  int max_x;
-  int max_y;
+  FieldBounds field_bounds;
 
   Tilemap main_tilemap;
   Tilemap decor_tilemap;
 
-  public Pathfinder(Tilemap main_tilemap, Tilemap decor_tilemap, int field_width, int field_height, int min_x, int min_y, int max_x, int max_y)
+  public Pathfinder(Tilemap main_tilemap, Tilemap decor_tilemap, FieldBounds field_bounds)
   {
     this.main_tilemap = main_tilemap;
     this.decor_tilemap = decor_tilemap;
-    this.field = new int[field_width, field_height];
-    this.min_x = min_x;
-    this.min_y = min_y;
-    this.max_x = max_x;
-    this.max_y = max_y;
+    this.field_bounds = field_bounds;
+    this.field = new int[field_bounds.GetWidth(), field_bounds.GetHeight()];
   }
 
   public List<Vector2> FindPath(Vector2 start, Vector2 goal)
@@ -91,7 +135,7 @@ public class Pathfinder
     return 1;
   }
 
-  int GetHeuristicPathLength(Vector2 from, Vector2 to)
+  public static int GetHeuristicPathLength(Vector2 from, Vector2 to)
   {
     int from_x = Mathf.RoundToInt(from.x);
     int to_x = Mathf.RoundToInt(to.x);
@@ -114,9 +158,7 @@ public class Pathfinder
   
     foreach(var point in neighbour_points)
     {
-      if(point.x < min_x || point.x > max_x)
-        continue;
-      if(point.y < min_y || point.y > max_y)
+      if(!field_bounds.PointExists(point))
         continue;
 
       Vector3Int tile_pos = new Vector3Int(Mathf.RoundToInt(point.x), Mathf.RoundToInt(point.y), 0);

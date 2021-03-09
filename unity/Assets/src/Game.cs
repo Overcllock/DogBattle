@@ -48,6 +48,11 @@ namespace game
       game_loop?.TrySwitchTo(new_state);
     }
 
+    public static Battleground GetBattleground()
+    {
+      return game_loop?.GetBattleground();
+    }
+
     void OnApplicationPause(bool paused)
     {
       

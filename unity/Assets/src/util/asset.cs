@@ -132,8 +132,8 @@ public static class Assets
     {
       ++pool_miss;
       game_object = Load(prefab);
-      var item = AddToPool(prefab, game_object, true);
-      item.Acquire(true);
+      var item = AddToPool(prefab, game_object, activate);
+      item.Acquire(activate);
     }
     else
       ++pool_hit;
@@ -149,8 +149,8 @@ public static class Assets
     {
       ++pool_miss;
       game_object = await LoadAsync(prefab);
-      var item = AddToPool(prefab, game_object, true);
-      item.Acquire(true);
+      var item = AddToPool(prefab, game_object, activate);
+      item.Acquire(activate);
     }
     else
       ++pool_hit;

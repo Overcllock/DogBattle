@@ -14,6 +14,9 @@ public enum GameMode
 
 public class GameLoop
 {
+  Battleground battleground = new Battleground();
+  public Battleground GetBattleground() => battleground;
+
   StateMachine<GameMode> fsm;
 
   public GameMode current_mode => fsm.CurrentState();
@@ -26,11 +29,13 @@ public class GameLoop
     public virtual void OnExit() { }
     
     public StateMachine<GameMode> fsm;
+    public GameLoop game_loop;
   }
 
   void AddState(State state)
   {
     state.fsm = fsm;
+    state.game_loop = this;
     fsm.Add(state.GetMode(), state.OnEnter, state.OnUpdate, state.OnExit);
   }
   
@@ -62,6 +67,8 @@ public class GameLoop
   {
     fsm.SwitchTo(state);
   }
+
+#region GameLoop states
 
   class StateLoading : State
   {
@@ -107,7 +114,12 @@ public class GameLoop
 
     public override async void OnEnter()
     {
-      Assets.TryReuse("Prefabs/location");
+      var battleground = game_loop.battleground;
+      if(battleground.IsLoaded())
+        battleground.Reset();
+      else
+        await battleground.Load();
+
       await UniTask.WaitWhile(() => UI.Exists("loading"));
       ui = await UI.OpenAsync("start");
     }
@@ -123,13 +135,25 @@ public class GameLoop
     public override GameMode GetMode() { return GameMode.Battle; }
 
     UIWindow hud;
+    BattleManager manager = new BattleManager();
 
     public override async void OnEnter()
     {
       await UniTask.WaitWhile(() => UI.Exists("start"));
       hud = UI.OpenSync("hud");
+
+      manager.Reset();
+      manager.StartBattle();
+    }
+
+    public override void OnExit()
+    {
+      hud.Close();
     }
   }
+
+#endregion
+
 }
 
 } //namespace game
