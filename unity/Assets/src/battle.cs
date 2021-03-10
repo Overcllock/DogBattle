@@ -25,6 +25,7 @@ public class BattleUnit : MonoBehaviour
   const float MAX_HP = 100f;
   const float DAMAGE_MIN = 5f;
   const float DAMAGE_MAX = 15f;
+  const float MOVE_SPEED = 1f; //Lower is faster
 
   uint id;
   public uint GetID() => id;
@@ -36,6 +37,15 @@ public class BattleUnit : MonoBehaviour
 
   uint team_index;
   public uint GetTeamIndex() => team_index;
+
+  bool is_moving = false;
+  public bool IsMoving() => is_moving;
+
+  Vector2 target_position;
+  List<Vector2> current_path;
+  BattleUnit target_unit;
+
+  Battleground battleground;
 
   StateMachine<BattleUnitState> fsm;
 
@@ -61,6 +71,7 @@ public class BattleUnit : MonoBehaviour
 
   void Awake()
   {
+    battleground = Game.GetBattleground();
     fsm = new StateMachine<BattleUnitState>();
 
     AddState(new StateSpawning());
@@ -92,6 +103,36 @@ public class BattleUnit : MonoBehaviour
   public void GetDamage(float damage)
   {
     hp = Mathf.Clamp(hp - damage, 0, MAX_HP);
+  }
+
+  public void SetTargetPosition(Vector2 pos) => target_position = pos;
+  public void SetTargetUnit(BattleUnit unit) => target_unit = unit;
+
+  public void SetCurrentPath(List<Vector2> path) => current_path = path;
+  public List<Vector2> GetCurrentPath() => current_path;
+
+  public Vector2 GetTargetPosition() => target_position;
+  public BattleUnit GetTargetUnit() => target_unit;
+
+  public bool HasTargetPosition() => !target_position.Equals(Vector2.positiveInfinity);
+  public bool HasTargetUnit() => target_unit != null;
+
+  public void ResetTargetPosition() => target_position = Vector2.positiveInfinity;
+  public void ResetTargetUnit() => target_unit = null;
+
+  public async void GoTo(Vector2 goal)
+  {
+    is_moving = true;
+
+    var tilemap = battleground.GetMainTilemap();
+
+    var cell_pos = new Vector3Int(Mathf.RoundToInt(goal.x), Mathf.RoundToInt(goal.y), 0);
+    var world_pos = tilemap.CellToWorld(cell_pos);
+
+    var tween = transform.DOMove(world_pos, MOVE_SPEED);
+    await tween.AsyncWaitForCompletion();
+
+    is_moving = false;
   }
 
   public Vector2 GetTilePosition()
@@ -128,19 +169,69 @@ public class BattleUnit : MonoBehaviour
   {
     public override BattleUnitState GetMode() { return BattleUnitState.Idle; }
 
+    Battleground battleground = Game.GetBattleground();
+    Vector2 tile_pos;
+    List<Vector2> neighbour_points;
+    List<Vector2> path;
+
     public override void OnEnter()
     {
+      tile_pos = unit.GetTilePosition();
+      neighbour_points = Pathfinder.GetPointNeighbours(tile_pos, with_diagonal: true);
+      path = unit.GetCurrentPath();
 
+      battleground.RemoveFromWalkable(tile_pos);
     }
 
     public override void OnUpdate()
     {
-      
-    }
+      //Trying to find enemies beside and attack it
+      foreach(var point in neighbour_points)
+      {
+        var tile_unit = battleground.GetTileUnit(point);
+        if(tile_unit == null || tile_unit.GetTeamIndex() == unit.GetTeamIndex())
+          continue;
+        
+        unit.SetTargetUnit(tile_unit);
+        fsm.TrySwitchTo(BattleUnitState.Attacking);
+        return;
+      }
 
-    public override void OnExit()
-    {
-      
+      //If next point from current path contains any unit - forget it
+      if(path != null)
+      {
+        if(path.Count == 0 || battleground.ContainsUnitAtPoint(path[0]))
+          path = null;
+      }
+
+      //Find new relative path to enemy, if that length less then current path length - replace it
+      var rel_path = battleground.GetRelevantPath(tile_pos, unit.GetTeamIndex());
+      if(rel_path != null)
+      {
+        if(path != null && path.Count > rel_path.Count || path == null)
+        {
+          path = rel_path;
+          unit.SetCurrentPath(rel_path);
+        }
+      }
+
+      //If unit has path - set first path point to current target..
+      Vector2 point_to_move;
+      if(path != null && path.Count > 0)
+      {
+        point_to_move = path[0];
+        path.RemoveAt(0);
+      }
+      //..or setting random available point
+      else
+        point_to_move = battleground.GetRandomPointToMove(tile_pos);
+
+      //If failed to find some target point - waiting
+      if(point_to_move.Equals(Vector2.positiveInfinity))
+        return;
+
+      unit.SetTargetPosition(point_to_move);
+      fsm.TrySwitchTo(BattleUnitState.Moving);
     }
   }
 
@@ -148,19 +239,36 @@ public class BattleUnit : MonoBehaviour
   {
     public override BattleUnitState GetMode() { return BattleUnitState.Moving; }
 
+    Battleground battleground = Game.GetBattleground();
+
     public override void OnEnter()
     {
+      if(!unit.HasTargetPosition())
+      {
+        fsm.TrySwitchTo(BattleUnitState.Idle);
+        return;
+      }
 
+      var current_position = unit.GetTilePosition();
+      var target_position = unit.GetTargetPosition();
+
+      battleground.RemoveFromWalkable(target_position);
+      battleground.AddToWalkable(current_position);
+
+      unit.GoTo(target_position);
     }
 
     public override void OnUpdate()
     {
-      
+      if(unit.IsMoving())
+        return;
+
+      fsm.TrySwitchTo(BattleUnitState.Idle);
     }
 
     public override void OnExit()
     {
-      
+      unit.ResetTargetPosition();
     }
   }
 
@@ -229,6 +337,7 @@ public class Battleground
   public bool IsLoaded() => is_loaded;
 
   Dictionary<uint, BattleUnit> units = new Dictionary<uint, BattleUnit>();
+  List<Vector2> walkable_points = new List<Vector2>();
 
   public async UniTask Load()
   {
@@ -243,7 +352,9 @@ public class Battleground
     
     Error.Assert(main_tilemap_go != null && decor_tilemap != null, "Tilemaps init failed.");
 
-    pathfinder = new Pathfinder(main_tilemap, decor_tilemap, bounds);
+    pathfinder = new Pathfinder(this, main_tilemap, decor_tilemap, bounds);
+
+    walkable_points.AddRange(bounds.GetAllPoints());
 
     is_loaded = true;
   }
@@ -263,25 +374,78 @@ public class Battleground
     return units[id];
   }
 
-  public BattleUnit FindNearestEnemyUnit(Vector2 point, uint team_index)
+  public List<Vector2> GetRelevantPath(Vector2 start, uint team_index)
   {
-    int min_dist = bounds.GetWidth() * bounds.GetHeight();
-    BattleUnit nearest_unit = null;
+    List<Vector2> rel_path = null;
+    int min_path_length = bounds.GetWidth() * bounds.GetHeight();
 
     foreach(var unit in units.Values)
     {
+      if(unit.GetTeamIndex() == team_index)
+        continue;
+
       var unit_tilepos = unit.GetTilePosition();
-      var dist = Pathfinder.GetHeuristicPathLength(point, unit_tilepos);
-      if(dist < min_dist)
-        nearest_unit = unit;
+
+      var path = pathfinder.FindPath(start, unit_tilepos);
+      if(path == null || path.Count == 0)
+        continue;
+
+      var path_length = path.Count;
+      if(path_length < min_path_length)
+      {
+        min_path_length = path_length;
+        rel_path = path;
+      }
     }
 
-    return nearest_unit;
+    return rel_path;
+  }
+
+  public Vector2 GetRandomPointToMove(Vector2 start)
+  {
+    var neighbours = Pathfinder.GetPointNeighbours(start);
+    neighbours.Shuffle();
+
+    foreach(var neighbour in neighbours)
+    {
+      if(pathfinder.IsWalkable(neighbour))
+        return neighbour;
+    }
+
+    return Vector2.positiveInfinity;
+  }
+
+  public BattleUnit GetTileUnit(Vector2 tile_pos)
+  {
+    foreach(var unit in units.Values)
+    {
+      if(unit.GetTilePosition().Equals(tile_pos))
+        return unit;
+    }
+
+    return null;
+  }
+
+  public void AddToWalkable(Vector2 point)
+  {
+    walkable_points.Add(point);
+  }
+
+  public void RemoveFromWalkable(Vector2 point)
+  {
+    walkable_points.Remove(point);
+  }
+
+  public bool ContainsUnitAtPoint(Vector2 point)
+  {
+    return !walkable_points.Contains(point);
   }
 
   public void Reset()
   {
     units.Clear();
+    walkable_points.Clear();
+    walkable_points.AddRange(bounds.GetAllPoints());
   }
 }
 
@@ -293,13 +457,19 @@ public class BattleManager
   FieldBounds team_1_spawn_bounds = new FieldBounds(-3, 2, 3, 3);
   FieldBounds team_2_spawn_bounds = new FieldBounds(-3, 2, -4, -4);
 
+  Battleground battleground;
+
+  public BattleManager()
+  {
+    this.battleground = Game.GetBattleground();
+    Error.Assert(this.battleground != null, "Unable to create BattleManager - battleground is not exist.");
+  }
+
   public void StartBattle()
   {
-    //Team 1
     var team_1_units_count = UnityEngine.Random.Range(MIN_UNITS_IN_TEAM, MAX_UNITS_IN_TEAM);
     SpawnUnits("Prefabs/dog_brown", team_1_spawn_bounds, team_1_units_count, team_index: 0);
 
-    //Team 2
     var team_2_units_count = UnityEngine.Random.Range(MIN_UNITS_IN_TEAM, MAX_UNITS_IN_TEAM);
     SpawnUnits("Prefabs/dog_gray", team_2_spawn_bounds, team_2_units_count, team_index: 1);
   }
@@ -327,6 +497,7 @@ public class BattleManager
     {
       var asset = await Assets.LoadAsync(unit_prefab);
       var unit = asset.AddComponentOnce<BattleUnit>();
+      unit.Init(team_index);
       
       var cell_x = Mathf.RoundToInt(points[i].x);
       var cell_y = Mathf.RoundToInt(points[i].y);

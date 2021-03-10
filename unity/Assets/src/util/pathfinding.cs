@@ -78,14 +78,56 @@ public class Pathfinder
   Tilemap main_tilemap;
   Tilemap decor_tilemap;
 
-  public Pathfinder(Tilemap main_tilemap, Tilemap decor_tilemap, FieldBounds field_bounds)
+  Battleground battleground;
+
+  public Pathfinder(Battleground battleground, Tilemap main_tilemap, Tilemap decor_tilemap, FieldBounds field_bounds)
   {
+    this.battleground = battleground;
     this.main_tilemap = main_tilemap;
     this.decor_tilemap = decor_tilemap;
     this.field_bounds = field_bounds;
     this.field = new int[field_bounds.GetWidth(), field_bounds.GetHeight()];
   }
 
+  public static List<Vector2> GetPointNeighbours(Vector2 point, bool with_diagonal = false)
+  {
+    var neighbour_points = new List<Vector2>();
+
+    neighbour_points.Add(new Vector2(point.x + 1, point.y));
+    neighbour_points.Add(new Vector2(point.x - 1, point.y));
+    neighbour_points.Add(new Vector2(point.x, point.y + 1));
+    neighbour_points.Add(new Vector2(point.x, point.y - 1));
+
+    if(with_diagonal)
+    {
+      neighbour_points.Add(new Vector2(point.x + 1, point.y + 1));
+      neighbour_points.Add(new Vector2(point.x - 1, point.y + 1));
+      neighbour_points.Add(new Vector2(point.x + 1, point.y - 1));
+      neighbour_points.Add(new Vector2(point.x - 1, point.y - 1));
+    }
+
+    return neighbour_points;
+  }
+
+  public bool IsWalkable(Vector2 point)
+  {
+    if(!field_bounds.PointExists(point))
+      return false;
+    
+    if(battleground.ContainsUnitAtPoint(point))
+      return false;
+
+    Vector3Int tile_pos = new Vector3Int(Mathf.RoundToInt(point.x), Mathf.RoundToInt(point.y), 0);
+    var main_tile = main_tilemap.GetTile<Tile>(tile_pos);
+    var decor_tile = decor_tilemap.GetTile<Tile>(tile_pos);
+
+    if(main_tile == null || decor_tile != null)
+      return false;
+
+    return true;
+  }
+
+  //TODO: may be more optimized
   public List<Vector2> FindPath(Vector2 start, Vector2 goal)
   {
     var closed_set = new List<PathNode>();
@@ -104,7 +146,7 @@ public class Pathfinder
     while(open_set.Count > 0)
     {
       var current_node = open_set.OrderBy(node => node.EstimateFullPathLength).First();
-      if(current_node.Position == goal)
+      if(current_node.Position.Equals(goal))
         return GetPathForNode(current_node);
 
       open_set.Remove(current_node);
@@ -113,10 +155,10 @@ public class Pathfinder
       var neighbours = GetNeighbours(current_node, goal);
       foreach(var neighbour in neighbours)
       {
-        if(closed_set.Count(node => node.Position == neighbour.Position) > 0)
+        if(closed_set.Count(node => node.Position.Equals(neighbour.Position)) > 0)
           continue;
 
-        var open_node = open_set.FirstOrDefault(node => node.Position == neighbour.Position);
+        var open_node = open_set.FirstOrDefault(node => node.Position.Equals(neighbour.Position));
         if(open_node == null)
           open_set.Add(neighbour);
         else if(open_node.PathLengthFromStart > neighbour.PathLengthFromStart)
@@ -137,34 +179,20 @@ public class Pathfinder
 
   public static int GetHeuristicPathLength(Vector2 from, Vector2 to)
   {
-    int from_x = Mathf.RoundToInt(from.x);
-    int to_x = Mathf.RoundToInt(to.x);
+    if(from == to || from.Equals(Vector2.positiveInfinity) || to.Equals(Vector2.positiveInfinity))
+      return 0;
 
-    int from_y = Mathf.RoundToInt(from.y);
-    int to_y = Mathf.RoundToInt(to.y);
-
-    return Mathf.Abs(from_x - to_x) + Mathf.Abs(from_y - to_y);
+    return Mathf.CeilToInt(Mathf.Abs(from.x - to.x) + Mathf.Abs(from.y - to.y));
   }
 
   List<PathNode> GetNeighbours(PathNode path_node, Vector2 goal)
   {
     var result = new List<PathNode>();
-  
-    Vector2[] neighbour_points = new Vector2[4];
-    neighbour_points[0] = new Vector2(path_node.Position.x + 1, path_node.Position.y);
-    neighbour_points[1] = new Vector2(path_node.Position.x - 1, path_node.Position.y);
-    neighbour_points[2] = new Vector2(path_node.Position.x, path_node.Position.y + 1);
-    neighbour_points[3] = new Vector2(path_node.Position.x, path_node.Position.y - 1);
+    var neighbour_points = GetPointNeighbours(path_node.Position);
   
     foreach(var point in neighbour_points)
     {
-      if(!field_bounds.PointExists(point))
-        continue;
-
-      Vector3Int tile_pos = new Vector3Int(Mathf.RoundToInt(point.x), Mathf.RoundToInt(point.y), 0);
-      var main_tile = main_tilemap.GetTile<Tile>(tile_pos);
-      var decor_tile = decor_tilemap.GetTile<Tile>(tile_pos);
-      if(main_tile == null || decor_tile != null)
+      if(!point.Equals(goal) && !IsWalkable(point))
         continue;
 
       var neighbour_node = new PathNode()
@@ -193,6 +221,12 @@ public class Pathfinder
     }
 
     result.Reverse();
+
+    if(result.Count > 0)
+      result.RemoveAt(0);
+    if(result.Count > 0)
+      result.RemoveAt(result.Count - 1);
+
     return result;
   }
 }
