@@ -520,7 +520,7 @@ public class Battleground
 
 public class BattleManager
 {
-  const int MIN_UNITS_IN_TEAM = 5;
+  const int MIN_UNITS_IN_TEAM = 2;
   const int MAX_UNITS_IN_TEAM = 6;
 
   FieldBounds team_1_spawn_bounds = new FieldBounds(-3, 2, 3, 3);
