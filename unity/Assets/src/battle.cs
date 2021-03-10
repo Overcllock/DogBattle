@@ -244,12 +244,8 @@ public class BattleUnit : MonoBehaviour
         point_to_move = path[0];
         path.RemoveAt(0);
       }
-      //..or setting random available point
+      //..or waiting
       else
-        point_to_move = battleground.GetRandomPointToMove(tile_pos);
-
-      //If failed to find some target point - waiting
-      if(point_to_move.Equals(Vector2.positiveInfinity))
         return;
 
       unit.SetTargetPosition(point_to_move);
@@ -462,20 +458,6 @@ public class Battleground
     return rel_path;
   }
 
-  public Vector2 GetRandomPointToMove(Vector2 start)
-  {
-    var neighbours = Pathfinder.GetPointNeighbours(start);
-    neighbours.Shuffle();
-
-    foreach(var neighbour in neighbours)
-    {
-      if(pathfinder.IsWalkable(neighbour))
-        return neighbour;
-    }
-
-    return Vector2.positiveInfinity;
-  }
-
   public BattleUnit GetTileUnit(Vector2 tile_pos)
   {
     foreach(var unit in units.Values)
@@ -538,7 +520,7 @@ public class Battleground
 
 public class BattleManager
 {
-  const int MIN_UNITS_IN_TEAM = 2;
+  const int MIN_UNITS_IN_TEAM = 5;
   const int MAX_UNITS_IN_TEAM = 6;
 
   FieldBounds team_1_spawn_bounds = new FieldBounds(-3, 2, 3, 3);

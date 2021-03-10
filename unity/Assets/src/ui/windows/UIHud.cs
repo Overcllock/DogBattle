@@ -8,7 +8,7 @@ namespace game
 
 public class UIHud : UIWindow
 {
-  const float HP_BAR_Y_OFFSET = 45f;
+  const float HP_BAR_Y_OFFSET = 62f;
 
   GameObject canvas_go;
 
