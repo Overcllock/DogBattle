@@ -1,8 +1,6 @@
 using UnityEngine;
-using System;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
-using UnityEngine.UI;
 using DG.Tweening;
 using UnityEngine.Tilemaps;
 using System.Linq;
@@ -40,6 +38,12 @@ public class BattleUnit : MonoBehaviour
 
   bool is_moving = false;
   public bool IsMoving() => is_moving;
+
+  bool is_attacking = false;
+  public bool IsAttacking() => is_attacking;
+
+  bool is_dying = false;
+  public bool IsDying() => is_dying;
 
   Vector2 target_position;
   List<Vector2> current_path;
@@ -103,6 +107,8 @@ public class BattleUnit : MonoBehaviour
   public void GetDamage(float damage)
   {
     hp = Mathf.Clamp(hp - damage, 0, MAX_HP);
+    if(hp == 0)
+      fsm.TrySwitchTo(BattleUnitState.Dying);
   }
 
   public void SetTargetPosition(Vector2 pos) => target_position = pos;
@@ -120,7 +126,7 @@ public class BattleUnit : MonoBehaviour
   public void ResetTargetPosition() => target_position = Vector2.positiveInfinity;
   public void ResetTargetUnit() => target_unit = null;
 
-  public async void GoTo(Vector2 goal)
+  public void GoTo(Vector2 goal)
   {
     is_moving = true;
 
@@ -128,11 +134,32 @@ public class BattleUnit : MonoBehaviour
 
     var cell_pos = new Vector3Int(Mathf.RoundToInt(goal.x), Mathf.RoundToInt(goal.y), 0);
     var world_pos = tilemap.CellToWorld(cell_pos);
+    world_pos.x += Battleground.UNIT_WORLD_POS_OFFSET_X;
+    world_pos.y += Battleground.UNIT_WORLD_POS_OFFSET_Y;
 
-    var tween = transform.DOMove(world_pos, MOVE_SPEED);
-    await tween.AsyncWaitForCompletion();
+    transform.DOMove(world_pos, MOVE_SPEED).OnComplete(() => is_moving = false);
+  }
 
-    is_moving = false;
+  public void Attack(BattleUnit target)
+  {
+    is_attacking = true;
+    
+    var normal_scale = new Vector3(1f, 1f, 1f);
+    var target_scale = new Vector3(1.3f, 1.3f, 1f);
+
+    transform.DOScale(target_scale, 0.25f).OnComplete(() => {
+      GiveDamage(target);
+
+      transform.DOScale(normal_scale, 0.25f).OnComplete(() => is_attacking = false);
+    });
+  }
+
+  public void Die()
+  {
+    is_dying = true;
+
+    var renderer = transform.GetComponentInChildren<SpriteRenderer>();
+    renderer.DOFade(0, 0.5f).OnComplete(() => is_dying = false);
   }
 
   public Vector2 GetTilePosition()
@@ -171,13 +198,11 @@ public class BattleUnit : MonoBehaviour
 
     Battleground battleground = Game.GetBattleground();
     Vector2 tile_pos;
-    List<Vector2> neighbour_points;
     List<Vector2> path;
 
     public override void OnEnter()
     {
       tile_pos = unit.GetTilePosition();
-      neighbour_points = Pathfinder.GetPointNeighbours(tile_pos, with_diagonal: true);
       path = unit.GetCurrentPath();
 
       battleground.RemoveFromWalkable(tile_pos);
@@ -186,13 +211,10 @@ public class BattleUnit : MonoBehaviour
     public override void OnUpdate()
     {
       //Trying to find enemies beside and attack it
-      foreach(var point in neighbour_points)
+      var target_unit = battleground.FindUnitToAttack(tile_pos, unit.GetTeamIndex());
+      if(target_unit != null)
       {
-        var tile_unit = battleground.GetTileUnit(point);
-        if(tile_unit == null || tile_unit.GetTeamIndex() == unit.GetTeamIndex())
-          continue;
-        
-        unit.SetTargetUnit(tile_unit);
+        unit.SetTargetUnit(target_unit);
         fsm.TrySwitchTo(BattleUnitState.Attacking);
         return;
       }
@@ -204,14 +226,14 @@ public class BattleUnit : MonoBehaviour
           path = null;
       }
 
-      //Find new relative path to enemy, if that length less then current path length - replace it
+      //Find new relevant path to enemy, if that length less then current path length - replace it
       var rel_path = battleground.GetRelevantPath(tile_pos, unit.GetTeamIndex());
       if(rel_path != null)
       {
-        if(path != null && path.Count > rel_path.Count || path == null)
+        if(path == null || path.Count > rel_path.Count)
         {
           path = rel_path;
-          unit.SetCurrentPath(rel_path);
+          unit.SetCurrentPath(path);
         }
       }
 
@@ -276,19 +298,33 @@ public class BattleUnit : MonoBehaviour
   {
     public override BattleUnitState GetMode() { return BattleUnitState.Attacking; }
 
+    BattleUnit target;
+
     public override void OnEnter()
     {
+      unit.SetCurrentPath(null);
 
+      if(!unit.HasTargetUnit())
+      {
+        fsm.TrySwitchTo(BattleUnitState.Idle);
+        return;
+      }
+
+      target = unit.GetTargetUnit();
+      unit.Attack(target);
     }
 
     public override void OnUpdate()
     {
-      
+      if(unit.IsAttacking())
+        return;
+
+      fsm.TrySwitchTo(BattleUnitState.Idle);
     }
 
     public override void OnExit()
     {
-      
+      unit.ResetTargetUnit();
     }
   }
 
@@ -296,19 +332,22 @@ public class BattleUnit : MonoBehaviour
   {
     public override BattleUnitState GetMode() { return BattleUnitState.Dying; }
 
+    Battleground battleground = Game.GetBattleground();
+
     public override void OnEnter()
     {
-
+      unit.Die();
     }
 
     public override void OnUpdate()
     {
-      
-    }
+      if(unit.IsDying())
+        return;
 
-    public override void OnExit()
-    {
-      
+      battleground.AddToWalkable(unit.GetTilePosition());
+      Destroy(unit.gameObject);
+
+      battleground.RemoveUnit(unit.GetID());
     }
   }
 
@@ -322,7 +361,13 @@ public class Battleground
   const int MIN_Y = -4;
   const int MAX_X = 2;
   const int MAX_Y = 3;
+
+  public const float UNIT_WORLD_POS_OFFSET_X = 0.5f;
+  public const float UNIT_WORLD_POS_OFFSET_Y = 0.35f;
   //
+
+  public delegate void UnitDead(uint unit_id, uint team_index);
+  public UnitDead OnUnitDead;
 
   FieldBounds bounds = new FieldBounds(MIN_X, MAX_X, MIN_Y, MAX_Y);
 
@@ -366,12 +411,28 @@ public class Battleground
     units.Add(id, unit);
   }
 
+  public void RemoveUnit(uint id)
+  {
+    if(!units.ContainsKey(id))
+      return;
+
+    var unit = units[id];
+    units.Remove(id);
+
+    OnUnitDead?.Invoke(id, unit.GetTeamIndex());
+  }
+
   public BattleUnit GetUnit(uint id)
   {
     if(!units.ContainsKey(id))
       return null;
     
     return units[id];
+  }
+
+  public int GetTeamUnitsCount(uint team_index)
+  {
+    return units.Values.Count(unit => unit.GetTeamIndex() == team_index);
   }
 
   public List<Vector2> GetRelevantPath(Vector2 start, uint team_index)
@@ -426,6 +487,29 @@ public class Battleground
     return null;
   }
 
+  public BattleUnit FindUnitToAttack(Vector2 pos, uint team_index)
+  {
+    BattleUnit rel_unit = null;
+    float min_hp = float.MaxValue;
+    var neighbour_points = Pathfinder.GetPointNeighbours(pos, with_diagonal: true);
+
+    foreach(var point in neighbour_points)
+    {
+      var tile_unit = GetTileUnit(point);
+      if(tile_unit == null || tile_unit.GetTeamIndex() == team_index)
+        continue;
+      
+      var hp = tile_unit.GetHP();
+      if(hp < min_hp)
+      {
+        min_hp = hp;
+        rel_unit = tile_unit;
+      }
+    }
+
+    return rel_unit;
+  }
+
   public void AddToWalkable(Vector2 point)
   {
     walkable_points.Add(point);
@@ -443,6 +527,9 @@ public class Battleground
 
   public void Reset()
   {
+    foreach(var unit in units.Values)
+      GameObject.Destroy(unit.gameObject);
+
     units.Clear();
     walkable_points.Clear();
     walkable_points.AddRange(bounds.GetAllPoints());
@@ -467,6 +554,8 @@ public class BattleManager
 
   public void StartBattle()
   {
+    battleground.OnUnitDead += OnUnitDead;
+
     var team_1_units_count = UnityEngine.Random.Range(MIN_UNITS_IN_TEAM, MAX_UNITS_IN_TEAM);
     SpawnUnits("Prefabs/dog_brown", team_1_spawn_bounds, team_1_units_count, team_index: 0);
 
@@ -476,7 +565,18 @@ public class BattleManager
 
   public void StopBattle()
   {
+    battleground.OnUnitDead -= OnUnitDead;
+
+    DOTween.KillAll(); //TODO: this is so bad, must kill only battleground tweens
+
     Game.TrySwitchState(GameMode.IdleScreen);
+  }
+
+  void OnUnitDead(uint id, uint team_index)
+  {
+    var alive_team_units = battleground.GetTeamUnitsCount(team_index);
+    if(alive_team_units == 0)
+      StopBattle();
   }
 
   async void SpawnUnits(string unit_prefab, FieldBounds bounds, int count, uint team_index)
@@ -504,16 +604,13 @@ public class BattleManager
 
       var point = new Vector3Int(cell_x, cell_y, 0);
       var world_pos = tilemap.CellToWorld(point);
+      world_pos.x += Battleground.UNIT_WORLD_POS_OFFSET_X;
+      world_pos.y += Battleground.UNIT_WORLD_POS_OFFSET_Y;
       
       unit.transform.position = world_pos;
 
       battleground.AddUnit(unit);
     }
-  }
-
-  public void Reset()
-  {
-
   }
 }
 

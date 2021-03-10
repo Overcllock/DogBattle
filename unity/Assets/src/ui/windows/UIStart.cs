@@ -9,6 +9,7 @@ public class UIStart : UIWindow
   protected override void Init()
   {
     this.GetChild("canvas/btn_start").MakeButton(DoStart);
+    this.GetChild("canvas/btn_exit").MakeButton(Exit);
     base.Init();
   }
 
@@ -16,6 +17,11 @@ public class UIStart : UIWindow
   {
     Debug.Log("Starting battle...");
     Game.TrySwitchState(GameMode.Battle);
+  }
+
+  void Exit()
+  {
+    Game.Quit();
   }
 
   public override async UniTask OpenAsync()

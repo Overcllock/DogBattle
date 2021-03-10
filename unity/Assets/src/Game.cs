@@ -1,5 +1,4 @@
 ﻿using UnityEngine;
-using Cysharp.Threading.Tasks;
 using DG.Tweening;
 
 namespace game 
@@ -28,11 +27,6 @@ namespace game
       game_loop.Init();
     }
 
-    void Update()
-    {
-      
-    }
-
     void FixedUpdate()
     {
       game_loop.Tick();
@@ -51,16 +45,6 @@ namespace game
     public static Battleground GetBattleground()
     {
       return game_loop?.GetBattleground();
-    }
-
-    void OnApplicationPause(bool paused)
-    {
-      
-    }
-
-    void OnApplicationQuit()
-    {
-      
     }
   }
 }

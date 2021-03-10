@@ -1,4 +1,3 @@
-using UnityEngine;
 using Cysharp.Threading.Tasks;
 
 namespace game 
@@ -99,8 +98,6 @@ public class GameLoop
     async UniTask Loading()
     {
       await Assets.PreloadAsync("Prefabs/location");
-      await UI.Preload("start");
-      await UI.Preload("hud");
 
       loading_completed = true;
     }
@@ -142,7 +139,6 @@ public class GameLoop
       await UniTask.WaitWhile(() => UI.Exists("start"));
       hud = UI.OpenSync("hud");
 
-      manager.Reset();
       manager.StartBattle();
     }
 

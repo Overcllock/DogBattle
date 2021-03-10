@@ -1,7 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
-using UnityEngine.UI;
 
 namespace game 
 {
@@ -10,8 +9,6 @@ public class UI
 {
   static GameObject root;
   static Transform windows_container;
-
-  public static Image blackout;
 
   public static Dictionary<uint, UIWindow> idle_windows = new Dictionary<uint, UIWindow>();
   public static Dictionary<uint, UIWindow> opened_windows = new Dictionary<uint, UIWindow>();
@@ -23,21 +20,12 @@ public class UI
 
     windows_container = root.GetChild("windows")?.transform;
     Error.Verify(windows_container != null);
-
-    blackout = root.GetChild("blackout")?.GetComponent<Image>();
-    Error.Verify(blackout != null);
-
-    //EnableBlackout(true);
   }
 
-  public static void EnableBlackout(bool enable)
-  {
-    blackout?.gameObject.SetActive(enable);
-  }
-
+  //TODO: Use assets pool for loading objects
   static UIWindow LoadWindowSync(string name)
   {
-    var prefab = Assets.TryReuse($"Prefabs/ui/windows/{name}", parent: windows_container.transform);
+    var prefab = Assets.Load($"Prefabs/ui/windows/{name}", parent: windows_container.transform);
     var window = prefab.GetComponent<UIWindow>();
 
     Error.Assert(window != null, $"Failed to load UI window ({name}). UIWindow component not found.");
@@ -49,7 +37,7 @@ public class UI
 
   static async UniTask<UIWindow> LoadWindowAsync(string name)
   {
-    var prefab = await Assets.TryReuseAsync($"Prefabs/ui/windows/{name}", parent: windows_container.transform);
+    var prefab = await Assets.LoadAsync($"Prefabs/ui/windows/{name}", parent: windows_container.transform);
     var window = prefab.GetComponent<UIWindow>();
 
     Error.Assert(window != null, $"Failed to load UI window ({name}). UIWindow component not found.");
@@ -338,7 +326,7 @@ public abstract class UIWindow : MonoBehaviour
     public override void OnEnter()
     {
       UI.opened_windows.Remove(window.GetNameHash());
-      Assets.Release(window.gameObject);
+      Destroy(window.gameObject);
     }
   }
 

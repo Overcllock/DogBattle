@@ -11,6 +11,11 @@ using UnityEngine.SceneManagement;
 namespace game 
 {
 
+public interface IReusable
+{
+  void OnReuse();
+}
+
 public static class Assets
 {
   public const string NO_PREFAB = "";

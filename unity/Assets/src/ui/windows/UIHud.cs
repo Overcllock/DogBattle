@@ -2,27 +2,32 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
-using UniRx;
 
 namespace game 
 {
 
 public class UIHud : UIWindow
 {
-  const float HP_BAR_X_OFFSET = 26f;
-  const float HP_BAR_Y_OFFSET = 53f;
+  const float HP_BAR_Y_OFFSET = 45f;
 
   GameObject canvas_go;
 
   Battleground battleground;
 
   Dictionary<uint, Scrollbar> hp_bars = new Dictionary<uint, Scrollbar>(); 
+  Stack<uint> invalid_ids = new Stack<uint>();
 
   protected override void Init()
   {
     battleground = Game.GetBattleground();
     canvas_go = this.GetChild("canvas");
+    this.GetChild("canvas/btn_exit").MakeButton(Exit);
     base.Init();
+  }
+
+  void Exit()
+  {
+    Game.Quit();
   }
 
   public override async void Open()
@@ -44,6 +49,12 @@ public class UIHud : UIWindow
 
   void UpdateHPBars()
   {
+    while(invalid_ids.Count > 0)
+    {
+      var id = invalid_ids.Pop();
+      hp_bars.Remove(id);
+    }
+
     foreach(var kv in hp_bars)
     {
       var unit_id = kv.Key;
@@ -52,16 +63,15 @@ public class UIHud : UIWindow
       var unit = battleground.GetUnit(unit_id);
       if(unit == null)
       {
-        Assets.Release(hp_bar.gameObject);
-        hp_bars.Remove(unit_id);
+        invalid_ids.Push(unit_id);
+        Destroy(hp_bar.gameObject);
         continue;
       }
 
-      hp_bar.value = unit.GetHPPercent();
+      hp_bar.size = unit.GetHPPercent();
 
       var screen_pos = Camera.main.WorldToScreenPoint(unit.transform.position);
       screen_pos.y += HP_BAR_Y_OFFSET;
-      screen_pos.x += HP_BAR_X_OFFSET;
 
       hp_bar.transform.position = screen_pos;
     }
